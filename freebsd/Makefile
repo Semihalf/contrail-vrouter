@@ -19,6 +19,7 @@ CWARNFLAGS = -Wno-error
 SRCS =	vrouter_mod.c \
 	vhost_dev.c \
 	vr_host_interface.c \
+	vr_mem.c \
 	vr_socket.c \
 	vr_bsd_transport.c
 
