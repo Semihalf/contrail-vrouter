@@ -149,8 +149,7 @@ fh_palloc(unsigned int size)
 	struct mbuf *m;
 
 	m = m_get2(size, M_NOWAIT, MT_DATA, 0);
-	if (!m)
-	       return (NULL);
+	KASSERT(m, ("mbuf allocation failed:%u", size));
 
 	return (freebsd_get_packet(m, NULL));
 }
@@ -188,7 +187,6 @@ fh_pfree(struct vr_packet *pkt, unsigned short reason)
 		((uint64_t *)(router->vr_pdrop_stats[pkt->vp_cpu]))[reason]++;
 
 	m_freem(m);
-	uma_zfree(zone_vr_packet, pkt);
 }
 
 static void
@@ -204,7 +202,7 @@ fh_preset(struct vr_packet *pkt)
 	/* Reset packet data */
 	pkt->vp_data = M_LEADINGSPACE(m);
 	pkt->vp_tail = M_LEADINGSPACE(m) + m->m_len;
-	pkt->vp_len = m->m_len;
+	pkt->vp_len =  m->m_len;
 }
 
 static struct vr_packet *
@@ -222,13 +220,12 @@ fh_pclone(struct vr_packet *pkt)
 	wrapper = uma_zalloc(zone_vr_packet, M_NOWAIT);
 	if (!wrapper) {
 		vr_log(VR_ERR, "cannot alloc wrapper");
-		m_freem(m_clone);
 		return (NULL);
 	}
 
 	memcpy(&wrapper->vrw_pkt, pkt, sizeof(*pkt));
 	wrapper->vrw_m = m_clone;
-	pkt_clone = &wrapper->vrw_pkt;
+	pkt_clone =  &wrapper->vrw_pkt;
 	return (pkt_clone);
 }
 
@@ -512,8 +509,7 @@ fh_adjust_tcp_mss(struct tcphdr *tcph, struct mbuf *m)
 			pkt_mss = be16dec(&opt_ptr[opt_off+2]);
 
 			ifp = (struct ifnet *) router->vr_eth_if->vif_os;
-			if (!ifp)
-				return;
+			KASSERT(ifp, ("NULL ifp for eth dev"));
 			max_mss = ifp->if_mtu -
 			    (VROUTER_OVERLAY_LEN + sizeof(struct vr_ip) +
 			     sizeof(struct tcphdr));
@@ -600,7 +596,7 @@ fh_pkt_from_vm_tcp_mss_adj(struct vr_packet *pkt)
 	tcph = (struct tcphdr *)(mtod(m, char *) + (pkt->vp_data + hlen));
 
 	if ((tcph->th_off << 2) <= sizeof(struct tcphdr))
-		goto out;
+		return 0;
 
 	pull_len += ((tcph->th_off << 2) - sizeof(struct tcphdr));
 	if (pull_len > m->m_len)
@@ -701,6 +697,7 @@ vrouter_freebsd_exit(void)
 	vr_message_exit();
 	vrouter_exit(false);
 	vhost_exit();
+	vr_mem_exit();
 	contrail_socket_destroy();
 }
 
@@ -736,16 +733,24 @@ vrouter_freebsd_init(void)
 		goto out2;
 	}
 
+	ret = vr_mem_init();
+	if (ret) {
+		vr_log(VR_ERR, "flow device initialization failed:%d\n", ret);
+		goto out3;
+	}
+
 	ret = vr_message_init();
 	if (ret) {
 		vr_log(VR_ERR, "message init error:%d\n", ret);
-		goto out3;
+		goto out4;
 	}
 
 	return (0);
 
-out3:
+out4:
 	vrouter_exit(false);
+out3:
+	vr_mem_exit();
 out2:
 	vhost_exit();
 out1:
@@ -760,24 +765,24 @@ vrouter_event_handler(struct module *module, int event, void *arg)
 {
 	int ret = 0;
 
-	switch (event)
-	{
-	case MOD_LOAD:
+        switch (event)
+        {
+          case MOD_LOAD:
 		ret = vrouter_freebsd_init();
 		if (ret) {
 			vr_log(VR_ERR, "vrouter load failed: %d\n", ret);
 			return (ret);
 		}
-		break;
-	case MOD_UNLOAD:
+	                break;
+          case MOD_UNLOAD:
 		vrouter_freebsd_exit();
-		break;
-	default:
-		ret = EOPNOTSUPP;
-		break;
-	}
+                break;
+          default:
+                ret = EOPNOTSUPP;
+                break;
+        }
 
-	return(ret);
+        return(ret);
 }
 
 static moduledata_t vrouter_mod = {
