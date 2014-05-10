@@ -252,8 +252,9 @@ linux_xmit(struct vr_interface *vif, struct sk_buff *skb,
     unsigned short proto = ntohs(skb->protocol);
 
     if (vif->vif_type != VIF_TYPE_PHYSICAL ||
-            skb->len <= skb->dev->mtu + skb->dev->hard_header_len)
+            skb->len <= skb->dev->mtu + skb->dev->hard_header_len) {
         return dev_queue_xmit(skb);
+    }
 
     if (proto == ETH_P_IP)
         return linux_inet_fragment(vif, skb, type);
@@ -274,8 +275,9 @@ linux_xmit_segment(struct vr_interface *vif, struct sk_buff *seg,
 
     /* we will do tunnel header updates after the fragmentation */
     if (seg->len > seg->dev->mtu + seg->dev->hard_header_len
-            || (type != VP_TYPE_IPOIP && type != VP_TYPE_L2OIP))
+            || (type != VP_TYPE_IPOIP && type != VP_TYPE_L2OIP && type != VP_TYPE_VXLAN)) {
         return linux_xmit(vif, seg, type);
+    }
 
     if (!pskb_may_pull(seg, ETH_HLEN + sizeof(struct vr_ip))) {
         reason = VP_DROP_PULL;
@@ -697,6 +699,9 @@ linux_if_tx(struct vr_interface *vif, struct vr_packet *pkt)
     struct skb_shared_info *sinfo;
     struct vr_ip *ip;
     unsigned short network_off, transport_off, cksum_off;
+#if CONFIG_XEN && (LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,32))
+    unsigned char *data;
+#endif
 
     skb->data = pkt_data(pkt);
     skb->len = pkt_len(pkt);
@@ -710,10 +715,29 @@ linux_if_tx(struct vr_interface *vif, struct vr_packet *pkt)
 
     if ((pkt->vp_flags & VP_FLAG_GRO) &&
             (vif->vif_type == VIF_TYPE_VIRTUAL)) {
-
+#if CONFIG_XEN && (LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,32))
+	if (unlikely(skb_headroom(skb) < ETH_HLEN)) {
+		struct sk_buff *nskb = skb_realloc_headroom(skb, LL_RESERVED_SPACE(dev));
+		if (!nskb) {
+			vif_drop_pkt(vif, pkt, false);
+			if (net_ratelimit())
+				printk(KERN_WARNING
+					 "Insufficient memory: %s %d\n",
+					__FUNCTION__, __LINE__);
+			return -ENOMEM;
+		}
+		memcpy(nskb->data - VR_MPLS_HDR_LEN, skb->data - VR_MPLS_HDR_LEN,
+			VR_MPLS_HDR_LEN);
+		kfree_skb(skb);
+		skb = nskb;
+	}
+	data = skb_push(skb, ETH_HLEN);
+	memset(data, 0xFE, ETH_HLEN - VR_MPLS_HDR_LEN);
+       skb_reset_mac_header(skb);
+#else
         skb_push(skb, VR_MPLS_HDR_LEN);
         skb_reset_mac_header(skb);
-
+#endif
         if (!skb_pull(skb, pkt->vp_network_h - (skb->data - skb->head))) {
             vif_drop_pkt(vif, pkt, false);
             return 0;
@@ -741,54 +765,57 @@ linux_if_tx(struct vr_interface *vif, struct vr_packet *pkt)
             skb_set_network_header(skb, (network_off - skb_headroom(skb)));
             skb_reset_mac_len(skb);
         }
-    } else if (pkt->vp_type == VP_TYPE_IPOIP || pkt->vp_type == VP_TYPE_IP) {
+    } else if (vr_pkt_is_ip(pkt)) {
         network_off = pkt_get_inner_network_header_off(pkt);
-        ip = (struct vr_ip *)(pkt_data_at_offset(pkt, network_off));
-        transport_off = network_off + (ip->ip_hl * 4);
 
-        skb_set_network_header(skb, (network_off - skb_headroom(skb)));
-        skb_reset_mac_len(skb);
-        skb_set_transport_header(skb, (transport_off - skb_headroom(skb)));
+        if (network_off) {
+            ip = (struct vr_ip *)(pkt_data_at_offset(pkt, network_off));
+            transport_off = network_off + (ip->ip_hl * 4);
 
-        /* 
-         * Manipulate partial checksum fields. 
-         * There are cases like mirroring where the UDP headers are newly added
-         * and skb needs to be filled with proper offsets. The vr_packet's fields
-         * are latest values and they need to be reflected in skb
-         */
-        if (pkt->vp_flags & VP_FLAG_CSUM_PARTIAL) {
-            cksum_off = skb->csum_offset;
-            if (ip->ip_proto == VR_IP_PROTO_TCP)
-                cksum_off = offsetof(struct vr_tcp, tcp_csum);
-            else if (ip->ip_proto == VR_IP_PROTO_UDP)
-                cksum_off = offsetof(struct vr_udp, udp_csum);
+            skb_set_network_header(skb, (network_off - skb_headroom(skb)));
+            skb_reset_mac_len(skb);
+            skb_set_transport_header(skb, (transport_off - skb_headroom(skb)));
 
-            skb_partial_csum_set(skb, (transport_off - skb_headroom(skb)), cksum_off);
-        }
-
-        /*
-         * Invoke segmentation only incase of both vr_packet and skb having gso
-         */
-        if ((pkt->vp_flags & VP_FLAG_GSO) && skb_is_gso(skb)) {
             /*
-             * it is possible that when we mirrored the packet, the inner
-             * packet was meant to be GSO-ed, and that would have been a
-             * TCP packet. Since we carried over the gso type from the inner
-             * packet, the value will be wrong, and that's where the following
-             * check comes into picture
+             * Manipulate partial checksum fields.
+             * There are cases like mirroring where the UDP headers are newly added
+             * and skb needs to be filled with proper offsets. The vr_packet's fields
+             * are latest values and they need to be reflected in skb
              */
-            if (ip->ip_proto == VR_IP_PROTO_UDP) {
-                sinfo = skb_shinfo(skb);
-                if (!(sinfo->gso_type & SKB_GSO_UDP)) {
-                    sinfo->gso_type &= ~(SKB_GSO_TCPV4 | SKB_GSO_TCP_ECN |
-                            SKB_GSO_TCPV6 | SKB_GSO_FCOE);
-                    sinfo->gso_type |= SKB_GSO_UDP;
-                }
+            if (pkt->vp_flags & VP_FLAG_CSUM_PARTIAL) {
+                cksum_off = skb->csum_offset;
+                if (ip->ip_proto == VR_IP_PROTO_TCP)
+                    cksum_off = offsetof(struct vr_tcp, tcp_csum);
+                else if (ip->ip_proto == VR_IP_PROTO_UDP)
+                    cksum_off = offsetof(struct vr_udp, udp_csum);
+
+                skb_partial_csum_set(skb, (transport_off - skb_headroom(skb)), cksum_off);
             }
 
-            if (vif->vif_type == VIF_TYPE_PHYSICAL) {
-                linux_gso_xmit(vif, skb, pkt->vp_type);
-                return 0;
+            /*
+             * Invoke segmentation only incase of both vr_packet and skb having gso
+             */
+            if ((pkt->vp_flags & VP_FLAG_GSO) && skb_is_gso(skb)) {
+                /*
+                 * it is possible that when we mirrored the packet, the inner
+                 * packet was meant to be GSO-ed, and that would have been a
+                 * TCP packet. Since we carried over the gso type from the inner
+                 * packet, the value will be wrong, and that's where the following
+                 * check comes into picture
+                 */
+                if (ip->ip_proto == VR_IP_PROTO_UDP) {
+                    sinfo = skb_shinfo(skb);
+                    if (!(sinfo->gso_type & SKB_GSO_UDP)) {
+                        sinfo->gso_type &= ~(SKB_GSO_TCPV4 | SKB_GSO_TCP_ECN |
+                            SKB_GSO_TCPV6 | SKB_GSO_FCOE);
+                        sinfo->gso_type |= SKB_GSO_UDP;
+                    }
+                }
+
+                if (vif->vif_type == VIF_TYPE_PHYSICAL) {
+                    linux_gso_xmit(vif, skb, pkt->vp_type);
+                    return 0;
+                }
             }
         }
     }
@@ -1409,6 +1436,13 @@ static void
 pkt_gro_dev_setup(struct net_device *dev)
 {
     /*
+     * Initializing the interfaces with basic parameters to setup address
+     * families.
+     */
+    random_ether_addr(dev->dev_addr);
+    dev->addr_len = ETH_ALEN;
+
+    /*
      * The hard header length is used by the GRO code to compare the
      * MAC header of the incoming packet with the MAC header of packets
      * undergoing GRO at the moment. In our case, each vif will have a
@@ -1431,6 +1465,13 @@ pkt_gro_dev_setup(struct net_device *dev)
 static void
 pkt_rps_dev_setup(struct net_device *dev)
 {
+    /*
+     * Initializing the interfaces with basic parameters to setup address
+     * families.
+     */
+    random_ether_addr(dev->dev_addr);
+    dev->addr_len = ETH_ALEN;
+
     dev->hard_header_len = ETH_HLEN;
 
     dev->type = ARPHRD_VOID;
@@ -1452,7 +1493,7 @@ linux_pkt_dev_init(char *name, void (*setup)(struct net_device *),
     struct net_device *pdev = NULL;
 
     if (!(pdev = alloc_netdev_mqs(0, name, setup,
-                                  1, num_possible_cpus()))) {
+                                  1, num_present_cpus()))) {
         vr_module_error(-ENOMEM, __FUNCTION__, __LINE__, 0);
         return NULL;
     }
@@ -1514,7 +1555,11 @@ pkt_gro_dev_rx_handler(struct sk_buff **pskb)
         }
     }
 
+#if CONFIG_XEN && (LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,32))
+    label = ntohl(*((unsigned int *) (skb_mac_header(skb) + ETH_HLEN - VR_MPLS_HDR_LEN)));
+#else
     label = ntohl(*((unsigned int *) skb_mac_header(skb)));
+#endif
     label >>= VR_MPLS_LABEL_SHIFT;
 
     if (label >= router->vr_max_labels) {

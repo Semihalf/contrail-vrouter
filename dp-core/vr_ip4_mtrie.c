@@ -1,5 +1,5 @@
 /*
- * vnsw_ip4_mtrie.c -- 	VRF mtrie management
+ * vr_ip4_mtrie.c -- 	VRF mtrie management
  *
  * Copyright (c) 2013 Juniper Networks, Inc. All rights reserved.	
  */
@@ -8,7 +8,7 @@
 #include <vr_packet.h>
 #include "vr_sandesh.h"
 #include "vr_message.h"
-#include "vnsw_ip4_mtrie.h"
+#include "vr_ip4_mtrie.h"
 
 extern struct vr_nexthop *ip4_default_nh; 
 
