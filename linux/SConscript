@@ -5,10 +5,8 @@
 Import('VRouterEnv')
 env = VRouterEnv.Clone()
 
-env.Library('dp_core', Glob('*.c'))
-
 if 'install' in COMMAND_LINE_TARGETS:
-    env.Append(SRC_INSTALL_TARGET = '/dp-core/')
+    env.Append(SRC_INSTALL_TARGET = '/linux/')
     env.Install(env['SRC_INSTALL_TARGET'], Glob('*.c'))
     env.Alias('install', env['SRC_INSTALL_TARGET'])
 

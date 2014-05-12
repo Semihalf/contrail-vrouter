@@ -351,7 +351,7 @@ nh_composite_ecmp(unsigned short vrf, struct vr_packet *pkt,
     if (stats)
         stats->vrf_ecmp_composites++;
 
-    if (!fmd || (uint8_t)fmd->fmd_ecmp_nh_index >= nh->nh_component_cnt)
+    if (!fmd || fmd->fmd_ecmp_nh_index >= (short)nh->nh_component_cnt)
         goto drop;
 
     if (fmd->fmd_ecmp_nh_index >= 0)
@@ -912,6 +912,9 @@ nh_vxlan_tunnel(unsigned short vrf, struct vr_packet *pkt,
 
     if (!fmd || fmd->fmd_label < 0)
         return vr_forward(nh->nh_router, vrf, pkt, fmd);
+
+    if (vr_perfs)
+        pkt->vp_flags |= VP_FLAG_GSO;
 
     if (nh_vxlan_tunnel_helper(vrf, pkt, fmd, nh->nh_udp_tun_sip,
                                             nh->nh_udp_tun_dip) == false) {

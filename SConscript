@@ -9,6 +9,9 @@ import os
 AddOption('--kernel-dir', dest = 'kernel-dir', action='store',
           help='Linux kernel source directory for vrouter.ko')
 
+AddOption('--system-header-path', dest = 'system-header-path', action='store',
+          help='Linux kernel headers for applications')
+
 env = DefaultEnvironment().Clone()
 VRouterEnv = env
 
@@ -36,7 +39,17 @@ if sys.platform.startswith('freebsd'):
     env['ENV']['MAKEOBJDIR'] = dp_dir
 
 if sys.platform != 'darwin':
-    subdirs = ['dp-core', 'host', 'sandesh', 'utils', 'uvrouter']
+
+    install_root = GetOption('install_root')
+    if install_root == None:
+        install_root = ''
+
+    src_root = install_root + '/usr/src/vrouter/'
+    env.Replace(SRC_INSTALL_TARGET = src_root)
+    env.Install(src_root, ['LICENSE', 'Makefile', 'GPL-2.0.txt'])
+    env.Alias('install', src_root)
+
+    subdirs = ['linux', 'include', 'dp-core', 'host', 'sandesh', 'utils', 'uvrouter']
     for sdir in  subdirs:
         env.SConscript(sdir + '/SConscript',
                        exports='VRouterEnv',
@@ -46,13 +59,16 @@ if sys.platform != 'darwin':
     make_cmd = 'make'
     if GetOption('kernel-dir'):
         make_cmd += ' KERNELDIR=' + GetOption('kernel-dir')
-    make_cmd += ' BUILD_DIR=' + Dir(env['TOP']).abspath
+    make_cmd += ' SANDESH_HEADER_PATH=' + Dir(env['TOP'] + '/vrouter/').abspath
+    make_cmd += ' SANDESH_SRC_ROOT=' + '../build/kbuild/'
+    make_cmd += ' SANDESH_EXTRA_HEADER_PATH=' + Dir('#tools/').abspath
+
     kern = env.Command('vrouter.ko', makefile, make_cmd, chdir=dp_dir)
-    env.Default('vrouter.ko')
+    env.Default(kern)
 
     env.Depends(kern, env.Install(
-            '#build/kbuild/sandesh/gen-c',
-            env['TOP'] + '/vrouter/sandesh/gen-c/vr_types.c'))
+                '#build/kbuild/sandesh/gen-c',
+                env['TOP'] + '/vrouter/sandesh/gen-c/vr_types.c'))
     sandesh_lib = [
         'protocol/thrift_binary_protocol.c',
         'protocol/thrift_protocol.c',
@@ -64,16 +80,12 @@ if sys.platform != 'darwin':
     for src in sandesh_lib:
         dirname = os.path.dirname(src)
         env.Depends(kern,
-                    env.Install(
-                '#build/kbuild/sandesh/library/c/' + dirname,
-                env['TOP'] + '/tools/sandesh/library/c/' + src))
+                env.Install(
+                    '#build/kbuild/sandesh/library/c/' + dirname,
+                    env['TOP'] + '/tools/sandesh/library/c/' + src))
 
-    if GetOption('clean'):
-        os.system('cd ' + dp_dir + '; make clean')
-
-    libmod_dir = GetOption('install_root')
-    if libmod_dir == None:
-        libmod_dir = ''
+    if GetOption('clean') and (not COMMAND_LINE_TARGETS or 'vrouter' in COMMAND_LINE_TARGETS):
+        os.system('cd ' + dp_dir + ';' + make_cmd + ' clean')
 
     if GetOption('kernel-dir'):
         kern_version = shellCommand(
@@ -82,8 +94,9 @@ if sys.platform != 'darwin':
         kern_version = shellCommand('uname -r')
 
     kern_version = kern_version.strip()
+    libmod_dir = install_root
     libmod_dir += '/lib/modules/%s/extra/net/vrouter' % kern_version
-    env.Alias('install', env.Install(libmod_dir, kern))
+    env.Alias('build-kmodule', env.Install(libmod_dir, kern))
 
 # Local Variables:
 # mode: python
