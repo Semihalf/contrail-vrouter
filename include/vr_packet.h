@@ -134,14 +134,14 @@
 #define VP_DROP_HEAD_ALLOC_FAIL             26
 #define VP_DROP_HEAD_SPACE_RESERVE_FAIL     27
 #define VP_DROP_PCOW_FAIL                   28
-#define VP_DROP_FLOOD                       29
+/* #define VP_DROP_FLOOD                    29 - UNUSED */
 #define VP_DROP_MCAST_CLONE_FAIL            30
-#define VP_DROP_COMPOSITE_INVALID_INTERFACE 31
+/* #define VP_DROP_COMPOSITE_INVALID_INTERFACE 31 - UNUSED */
 #define VP_DROP_REWRITE_FAIL                32
 #define VP_DROP_MISC                        33
 #define VP_DROP_INVALID_PACKET              34
 #define VP_DROP_CKSUM_ERR                   35
-#define VP_DROP_CLONE_FAIL                  36
+/* #define VP_DROP_CLONE_FAIL               36 - UNUSED */
 #define VP_DROP_NO_FMD                      37
 #define VP_DROP_CLONED_ORIGINAL             38
 #define VP_DROP_INVALID_VNID                39
@@ -237,6 +237,8 @@ struct vr_eth {
 } __attribute__((packed));
 
 #define VLAN_ID_INVALID         0xFFFF
+#define VLAN_ID_MAX             0xFFFF
+
 struct vr_vlan_hdr {
     unsigned short vlan_tag;
     unsigned short vlan_proto;
@@ -497,6 +499,7 @@ struct vr_forwarding_md {
     int8_t fmd_ecmp_src_nh_index;
     int16_t fmd_dvrf;
     uint32_t fmd_outer_src_ip;
+    uint16_t fmd_vlan;
 };
 
 static inline void
@@ -508,6 +511,7 @@ vr_init_forwarding_md(struct vr_forwarding_md *fmd)
     fmd->fmd_label = -1;
     fmd->fmd_dvrf = -1;
     fmd->fmd_outer_src_ip = 0;
+    fmd->fmd_vlan = 4096;
     return;
 }
 
