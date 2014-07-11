@@ -48,7 +48,7 @@ struct vr_bridge_entry *vr_find_bridge_entry(struct vr_bridge_entry_key *);
 int bridge_table_init(struct vr_rtable *, struct rtable_fspec *);
 void bridge_table_deinit(struct vr_rtable *, struct rtable_fspec *, bool);
 unsigned int vr_l2_input(unsigned short, struct vr_packet *,
-                struct vr_forwarding_md *, unsigned short);
+                struct vr_forwarding_md *);
 struct vr_bridge_entry *vr_find_bridge_entry(struct vr_bridge_entry_key *);
 struct vr_bridge_entry *vr_find_free_bridge_entry(unsigned int, char *);
 

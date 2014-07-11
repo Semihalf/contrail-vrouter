@@ -20,7 +20,7 @@ static int eth_rx(struct vr_interface *, struct vr_packet *, unsigned short);
 
 void vif_attach(struct vr_interface *);
 void vif_detach(struct vr_interface *);
-int vr_gro_vif_add(struct vrouter *, unsigned int);
+int vr_gro_vif_add(struct vrouter *, unsigned int, char *);
 struct vr_interface_stats *vif_get_stats(struct vr_interface *, unsigned short);
 struct vr_interface *__vrouter_get_interface_os(struct vrouter *, unsigned int);
 
@@ -594,7 +594,7 @@ vlan_rx(struct vr_interface *vif, struct vr_packet *pkt,
 static int
 vlan_tx(struct vr_interface *vif, struct vr_packet *pkt)
 {
-    int ret;
+    int ret = 0;
     struct vr_interface *pvif;
     struct vr_interface_stats *stats = vif_get_stats(vif, pkt->vp_cpu);
 
@@ -1355,7 +1355,6 @@ vr_interface_add(vr_interface_req *req, bool need_response)
             vif->vif_driver = &vif_drivers[vif->vif_type];
         }
     }
-
 
     if (!ret)
         vrouter_setup_vif(vif);

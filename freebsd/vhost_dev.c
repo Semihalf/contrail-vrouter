@@ -225,3 +225,9 @@ vhost_init(void)
 {
 	return (vhost_cloner_init());
 }
+
+void
+vhost_remove_xconnect(void)
+{
+    return;
+}

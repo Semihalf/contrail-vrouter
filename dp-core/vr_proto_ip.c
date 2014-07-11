@@ -24,6 +24,7 @@ int vr_ip_input(struct vrouter *, unsigned short, struct vr_packet *,
 unsigned int vr_gre_input(struct vrouter *, struct vr_packet *,
         struct vr_forwarding_md *);
 void vr_ip_update_csum(struct vr_packet *, unsigned int, unsigned int);
+unsigned int vr_route_flags(unsigned int, unsigned int);
 
 static unsigned short vr_ip_id;
 
