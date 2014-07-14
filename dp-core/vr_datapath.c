@@ -17,6 +17,8 @@ unsigned int vr_l3_input(unsigned short, struct vr_packet *,
                               struct vr_forwarding_md *);
 int vr_reach_l3_hdr(struct vr_packet *, unsigned short *);
 
+extern unsigned int vr_route_flags(unsigned int, unsigned int);
+
 static inline bool
 well_known_mac(unsigned char *dmac)
 {
@@ -43,9 +45,11 @@ vr_handle_arp_request(struct vrouter *router, unsigned short vrf,
     struct vr_packet *cloned_pkt;
     struct vr_interface *vif = pkt->vp_if;
     unsigned short proto = htons(VR_ETH_PROTO_ARP);
+    unsigned short *eth_proto;
+    unsigned short pull_tail_len = VR_ETHER_HLEN;
     struct vr_eth *eth;
     struct vr_arp *arp;
-    unsigned int dpa;
+    unsigned int dpa, rt_flags;
     bool should_proxy = false;
 
     /* 
@@ -73,7 +77,13 @@ vr_handle_arp_request(struct vrouter *router, unsigned short vrf,
      * Vhost - xconnected above
      */
     if (vr_grat_arp(sarp)) {
-        if (vif->vif_type == VIF_TYPE_VIRTUAL) {
+        if (vif_is_virtual(vif)) {
+            rt_flags = vr_route_flags(vif->vif_vrf, sarp->arp_dpa);
+            if (rt_flags & VR_RT_ARP_TRAP_FLAG) {
+                vr_preset(pkt);
+                return vr_trap(pkt, vrf, AGENT_TRAP_ARP, NULL);
+            }
+
             vr_pfree(pkt, VP_DROP_GARP_FROM_VM);
             return 0;
         }
@@ -93,9 +103,19 @@ vr_handle_arp_request(struct vrouter *router, unsigned short vrf,
         eth = (struct vr_eth *)pkt_data(pkt);
         memcpy(eth->eth_dmac, sarp->arp_sha, VR_ETHER_ALEN);
         memcpy(eth->eth_smac, vif->vif_mac, VR_ETHER_ALEN);
-        memcpy(&eth->eth_proto, &proto, sizeof(proto));
+        eth_proto = &eth->eth_proto;
+        if (vif_is_vlan(vif)) {
+            if (vif->vif_vlan_id) {
+                *eth_proto = htons(VR_ETH_PROTO_VLAN);
+                eth_proto++;
+                *eth_proto = htons(vif->vif_vlan_id);
+                eth_proto++;
+                pull_tail_len += sizeof(struct vr_vlan_hdr);
+            }
+        }
+        memcpy(eth_proto, &proto, sizeof(proto));
 
-        arp = (struct vr_arp *)pkt_pull_tail(pkt, VR_ETHER_HLEN);
+        arp = (struct vr_arp *)pkt_pull_tail(pkt, pull_tail_len);
 
         sarp->arp_op = htons(VR_ARP_OP_REPLY);
         memcpy(sarp->arp_sha, vif->vif_mac, VR_ETHER_ALEN);
@@ -125,6 +145,7 @@ static int
 vr_handle_arp_reply(struct vrouter *router, unsigned short vrf,
         struct vr_arp *sarp, struct vr_packet *pkt)
 {
+    unsigned int rt_flags;
     struct vr_interface *vif = pkt->vp_if;
     struct vr_packet *cloned_pkt;
 
@@ -132,6 +153,15 @@ vr_handle_arp_reply(struct vrouter *router, unsigned short vrf,
         return vif_xconnect(vif, pkt);
 
     if (vif->vif_type != VIF_TYPE_PHYSICAL) {
+        if (vif->vif_type == VIF_TYPE_VIRTUAL) {
+            rt_flags = vr_route_flags(vif->vif_vrf, sarp->arp_dpa);
+            if (rt_flags & VR_RT_ARP_TRAP_FLAG) {
+                vr_preset(pkt);
+                return vr_trap(pkt, vrf, AGENT_TRAP_ARP, NULL);
+            }
+        }
+
+        /* ...else, just drop */
         vr_pfree(pkt, VP_DROP_INVALID_IF);
         return 0;
     }
@@ -232,7 +262,7 @@ vr_l3_input(unsigned short vrf, struct vr_packet *pkt,
     unsigned char *dmac = &eth[VR_ETHER_DMAC_OFF];
     unsigned short eth_proto = 0;
     int reason;
-    unsigned short pull_len;
+    int pull_len;
     struct vr_interface *vif = pkt->vp_if;
     struct vrouter *router = vif->vif_router;
     /*
@@ -255,8 +285,8 @@ vr_l3_input(unsigned short vrf, struct vr_packet *pkt,
     pkt_set_network_header(pkt, pkt->vp_data);
     pkt_set_inner_network_header(pkt, pkt->vp_data);
     if (eth_proto == VR_ETH_PROTO_IP) {
-        if (vr_from_vm_mss_adj && vr_pkt_from_vm_tcp_mss_adj &&
-                            (vif->vif_type == VIF_TYPE_VIRTUAL)) {
+        if (vr_from_vm_mss_adj && vr_pkt_from_vm_tcp_mss_adj && 
+                                             vif_is_virtual(vif)) {
             if ((reason = vr_pkt_from_vm_tcp_mss_adj(pkt, VROUTER_OVERLAY_LEN))) {
                 vr_pfree(pkt, reason);
                 return 0;
