@@ -44,11 +44,20 @@
 #include "vr_freebsd.h"
 #include "vr_proto.h"
 #include "vhost.h"
+#include "vr_os.h"
 
 static struct if_clone *vhost_cloner;
 static const char vhost_name[] = "vhost";
 static const u_int8_t vhost_mac[ETHER_ADDR_LEN] =
                 { 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 };
+
+/*
+ * When agent dies, cross connect logic would need the list of vhost
+ * interfaces which it should put in cross connect. Also, used in cases
+ * when physical interface goes away from the system.
+ */
+struct vhost_priv **vhost_priv_db;
+unsigned int vhost_num_interfaces;
 
 static void
 vhost_if_start(struct ifnet *ifp)
@@ -105,12 +114,13 @@ vhost_if_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
     struct ifreq *ifr;
     int error;
 
-    ifr = (struct ifreq *)data;
-    switch (cmd) {
-    default:
-        error = ether_ioctl(ifp, cmd, data);
-        break;
-    }
+	ifr = (struct ifreq *)data;
+
+	switch (cmd) {
+	default:
+		error = ether_ioctl(ifp, cmd, data);
+		break;
+	}
 
     return (error);
 }
@@ -138,10 +148,11 @@ vhost_clone_create(struct if_clone *ifc, char *name, size_t len,
     if (!ifp)
         return (ENOSPC);
 
-    /* Set up private data */
-    ifp->if_softc = sc;
-    sc->vp_ifp = ifp;
-    mtx_init(&sc->vp_mtx, "vhost_mtx", NULL, MTX_DEF);
+	/* Set up private data */
+	ifp->if_softc = sc;
+	sc->vp_ifp = ifp;
+	sc->vp_db_index = -1;
+	mtx_init(&sc->vp_mtx, "vhost_mtx", NULL, MTX_DEF);
 
     /* Set up interface */
     if_initname(ifp, name, IF_DUNIT_NONE);
@@ -187,17 +198,33 @@ vhost_cloner_init(void)
 void
 vhost_if_add(struct vr_interface *vif)
 {
-    struct ifnet *ifp;
-    struct vhost_priv *sc;
+	int i;
+	struct ifnet *ifp = (struct ifnet *) vif->vif_os;
+	struct vhost_priv *vp = ifp->if_softc;
 
-    KASSERT(vif, ("NULL vif"));
+	vp->vp_vifp = vif;
+	if (vif->vif_type == VIF_TYPE_HOST) {
+		if (vif->vif_bridge) {
+			if (vp->vp_db_index >= 0)
+				return;
 
-    ifp = (struct ifnet *)vif->vif_os;
-    KASSERT(ifp, ("NULL ifp for vif:%p", vif));
+			/* ...may be a bitmap? */
+			for (i = 0; i < VHOST_MAX_INTERFACES; i++)
+				if (!vhost_priv_db[i])
+					break;
 
-    sc = ifp->if_softc;
-    KASSERT(sc, ("NULL sc for ifp:%p", ifp));
-    sc->vp_vifp = vif;
+			if (i < VHOST_MAX_INTERFACES) {
+				vp->vp_db_index = i;
+				vhost_priv_db[i] = vp;
+			} else {
+				vr_printf("%s not added to vhost database. ",
+					vp->vp_ifp->if_xname);
+				vr_printf("Cross connect will not work\n");
+			}
+		}
+	}
+
+	return;
 }
 
 void
@@ -215,6 +242,7 @@ vhost_if_del(struct ifnet* ifp)
 void
 vhost_exit(void)
 {
+	vr_free(vhost_priv_db);
 
     if_clone_detach(vhost_cloner);
 }
@@ -222,11 +250,36 @@ vhost_exit(void)
 int
 vhost_init(void)
 {
-    return (vhost_cloner_init());
+    if (!vhost_priv_db) {
+        vhost_priv_db = malloc(sizeof (struct vhost_priv *) *
+                VHOST_MAX_INTERFACES, M_VROUTER, M_WAIT|M_ZERO);
+        if (!vhost_priv_db)
+            return (ENOMEM);
+    }
+	return (vhost_cloner_init());
 }
 
 void
 vhost_remove_xconnect(void)
 {
-    return;
+	int i;
+	struct vhost_priv *vp;
+	struct vr_interface *bridge;
+
+	if (!vhost_priv_db)
+		return;
+
+	for (i = 0; i < VHOST_MAX_INTERFACES; i++) {
+		vp = vhost_priv_db[i];
+
+		if (vp) {
+			if (vp->vp_vifp) {
+				vif_remove_xconnect(vp->vp_vifp);
+				if ((bridge = vp->vp_vifp->vif_bridge))
+					vif_remove_xconnect(bridge);
+			}
+		}
+	}
+
+	return;
 }
