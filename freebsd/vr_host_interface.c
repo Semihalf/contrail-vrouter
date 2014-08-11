@@ -206,8 +206,10 @@ freebsd_if_add_tap(struct vr_interface *vif)
 	KASSERT(ifp, ("NULL ifp in vif:%p", vif));
 
 	/* Replace input routine */
-	vif->saved_if_input = ifp->if_input;
-	ifp->if_input = freebsd_rx_handler;
+	if (ifp->if_input != freebsd_rx_handler) {
+		vif->saved_if_input = ifp->if_input;
+		ifp->if_input = freebsd_rx_handler;
+	}
 
 	return (0);
 }
@@ -223,8 +225,10 @@ freebsd_if_del_tap(struct vr_interface *vif)
 	KASSERT(ifp, ("NULL ifp in vif:%p", vif));
 
 	/* Restore original input routine */
-	ifp->if_input = vif->saved_if_input;
-	vif->saved_if_input = NULL;
+	if (vif->saved_if_input != NULL) {
+		ifp->if_input = vif->saved_if_input;
+		vif->saved_if_input = NULL;
+	}
 
 	return (0);
 }
