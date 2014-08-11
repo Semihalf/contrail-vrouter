@@ -229,6 +229,20 @@ freebsd_if_del_tap(struct vr_interface *vif)
 	return (0);
 }
 
+static void
+freebsd_adjust_mbuf_data_ptr(struct mbuf *m, struct vr_packet *pkt)
+{
+	int len;
+
+	len = pkt->vp_data - M_LEADINGSPACE(m);
+	if (len > 0) {
+		m_adj(m, len);
+	}
+	if (len < 0) {
+		M_PREPEND(m, -len, M_WAIT);
+	}
+}
+
 static int
 freebsd_if_tx(struct vr_interface *vif, struct vr_packet *pkt)
 {
@@ -246,13 +260,11 @@ freebsd_if_tx(struct vr_interface *vif, struct vr_packet *pkt)
 
 	ifp = (struct ifnet *)vif->vif_os;
 	KASSERT(ifp, ("NULL ifp in vif:%p", vif));
-
 	/* Fetch original mbuf from packet structure */
 	m = vp_os_packet(pkt);
 
 	/* Trim mbuf if vp_data is not at the beginning */
-	if (pkt->vp_data != M_LEADINGSPACE(m))
-		m_adj(m, pkt->vp_data - M_LEADINGSPACE(m));
+	freebsd_adjust_mbuf_data_ptr(m, pkt);
 
 	eh = mtod(m, struct ether_header *);
 	type = ntohs(eh->ether_type);
