@@ -15,6 +15,10 @@
 #include "vr_datapath.h"
 #include "vr_hash.h"
 
+#ifdef __FreeBSD__
+#include "vr_freebsd.h"
+#endif
+
 extern unsigned int vr_forward(struct vrouter *, unsigned short,
         struct vr_packet *, struct vr_forwarding_md *);
 extern bool vr_has_to_fragment(struct vr_interface *, struct vr_packet *,
@@ -26,6 +30,15 @@ extern struct vr_nexthop * vr_inet_src_lookup(unsigned short ,
 
 struct vr_nexthop *ip4_default_nh;
 struct vr_nexthop *ip6_default_nh;
+
+#ifdef __FreeBSD__
+void
+get_random_bytes(void *buf, int nbytes)
+{
+
+    vr_log(VR_ERR, "%s: not implemented\n", __func__);
+}
+#endif
 
 struct vr_nexthop *
 __vrouter_get_nexthop(struct vrouter *router, unsigned int index)
