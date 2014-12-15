@@ -517,10 +517,10 @@ vr_l3_well_known_packet(unsigned short vrf, struct vr_packet *pkt)
                  * Bridge neighbor solicit for link-local addresses
                  */
                 if (ip6->ip6_nxt == VR_IP_PROTO_ICMP6) {
-                    icmph = ((char *)ip6 + sizeof(struct vr_ip6));
+                    icmph = (struct vr_icmp *)((char *)ip6 + sizeof(struct vr_ip6));
                 }
                 if (icmph && (icmph->icmp_type == VR_ICMP6_TYPE_NEIGH_SOL)
-                          && vr_v6_prefix_is_ll(&icmph->icmp_data)) {
+                          && vr_v6_prefix_is_ll(icmph->icmp_data)) {
                     return false;
                 }
             }
@@ -594,4 +594,3 @@ vr_tag_pkt(struct vr_packet *pkt, unsigned short vlan_id)
     *vlan_tag = htons(vlan_id);
     return 0;
 }
-
