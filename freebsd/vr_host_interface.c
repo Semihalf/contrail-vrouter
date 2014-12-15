@@ -40,6 +40,7 @@
 #include <net/if.h>
 #include <net/if_var.h>
 #include <net/if_media.h>
+#include <net/if_types.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip_var.h>
@@ -349,6 +350,36 @@ freebsd_if_get_settings(struct vr_interface *vif,
 	return (-1);
 }
 
+static unsigned short
+freebsd_if_get_encap(struct vr_interface *vif)
+{
+	struct ifnet *ifp;
+	struct if_data *ifdp;
+
+	ifp = (struct ifnet *)vif->vif_os;
+	ifdp = &ifp->if_data;
+
+	if (ifdp && (ifdp->ifi_type != IFT_ETHER))
+		return VIF_ENCAP_TYPE_L3;
+
+	return VIF_ENCAP_TYPE_ETHER;
+}
+
+static unsigned int
+freebsd_if_get_mtu(struct vr_interface *vif)
+{
+	struct ifnet *ifp;
+	struct if_data *ifdp;
+
+	ifp = (struct ifnet *)vif->vif_os;
+	ifdp = &ifp->if_data;
+
+	if (ifdp)
+		return (unsigned int)ifdp->ifi_mtu;
+	else
+		return vif->vif_mtu;
+}
+
 struct vr_host_interface_ops vr_freebsd_interface_ops = {
 	.hif_add		= freebsd_if_add,
 	.hif_del		= freebsd_if_del,
@@ -357,6 +388,8 @@ struct vr_host_interface_ops vr_freebsd_interface_ops = {
 	.hif_tx			= freebsd_if_tx,
 	.hif_rx			= freebsd_if_rx,
 	.hif_get_settings	= freebsd_if_get_settings,
+	.hif_get_encap		= freebsd_if_get_encap,
+	.hif_get_mtu		= freebsd_if_get_mtu,
 };
 
 void
