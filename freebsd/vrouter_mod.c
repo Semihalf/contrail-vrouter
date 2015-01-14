@@ -653,6 +653,24 @@ out:
 	return (0);
 }
 
+static int
+fh_pkt_may_pull(struct vr_packet *pkt, unsigned int len)
+{
+	unsigned int pull_len;
+	struct mbuf *m;
+
+	m = vp_os_packet(pkt);
+
+	pull_len = pkt->vp_data + len;
+	if (pull_len > m->m_len) {
+		if(!m_pullup(m, pull_len))
+			return -1;
+	}
+
+	fh_reset_mbuf_fields(pkt);
+	return 0;
+}
+
 struct host_os freebsd_host = {
 	.hos_malloc			= fh_malloc,
 	.hos_zalloc			= fh_zalloc,
@@ -693,6 +711,7 @@ struct host_os freebsd_host = {
 	.hos_pull_inner_headers_fast	= NULL, /* TODO(md): to implement */
 	.hos_get_udp_src_port		= fh_get_udp_src_port,
 	.hos_pkt_from_vm_tcp_mss_adj	= fh_pkt_from_vm_tcp_mss_adj,
+	.hos_pkt_may_pull               =       fh_pkt_may_pull,
 };
 
 struct host_os *
